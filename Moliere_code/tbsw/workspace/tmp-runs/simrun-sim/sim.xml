@@ -1,0 +1,11 @@
+<marlin ns0:noNamespaceSchemaLocation="http://ilcsoft.desy.de/marlin/marlin.xsd" xmlns:ns0="http://www.w3.org/2001/XMLSchema-instance">  
+   <global>
+      <parameter name="LCIOInputFiles" value="" />
+      <parameter name="GearXMLFile" value="" />
+      <parameter name="MaxRecordNumber" value="-1" />
+      <parameter name="SkipNEvents" value="0" />
+      <parameter name="SupressCheck" value="false" />
+      <parameter name="Verbosity" value="MESSAGE3" />
+   </global>
+   
+   <execute /></marlin>

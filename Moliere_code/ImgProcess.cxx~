@@ -1,0 +1,149 @@
+#include <cmath>
+#include <iostream>
+#include "TFile.h"
+#include "TTree.h"
+#include "TMath.h"
+#include "TROOT.h"
+#include "Fit/Fitter.h"
+#include "Fit/BinData.h"
+#include "Fit/Chi2FCN.h"
+#include "TCanvas.h"
+#include "TStyle.h"
+#include <cstdlib>
+#include "TChain.h"
+#include "TCanvas.h"
+#include "TObjString.h"
+#include "TH1.h"
+#include "TH2.h"
+#include "ParListAl.h"
+
+double CalculateX0(double theta){
+	double X0min = 0.00001;
+	double X0max = 10;  
+	double tolerance = 1e-8;
+	double X0 = (X0min+X0max)/2.0;	
+	double error = X0max;
+
+	double Ze;		// atomic number of target material
+	Ze=par[1];
+
+	double E = par[0];		// Energy in GeV
+	double mass = par[2];	// mass of the particle in GeV
+	double p = TMath::Sqrt(E*E-mass*mass);
+	double beta = p/E;
+	//cout<<"beta = "<<beta<<endl;
+	//cout<<"p = "<<p<<endl;
+	for (int i = 1; TMath::Abs(error) > tolerance; i++){
+		X0 = (X0min+X0max)/2.0;
+		error = theta/1000 - (13.6*0.001/(beta*p)*Ze*TMath::Sqrt(X0)*(1+0.038*TMath::Log(X0))); 	
+		//cout<<"error = "<<error<<endl; 
+		if (error <= 0){
+			X0max = X0;
+		}else{
+			X0min = X0;
+		}		
+		if(i > 20){		//maximum  estimation accuracy for 30 iterations is 10^-8    
+			break;
+			cout<<"Solution for X/X0 did not converge"<<endl; 
+		}
+	}
+	return X0;
+}
+
+void ImgProcess(void){
+	
+	double xl = -4;
+	double xr = 4;
+	double yl = -4;
+	double yr = 4;
+	double step = 8;
+	int nbinx = (int)((xr-xl)/step);
+	int nbiny = (int)((yr-yl)/step);
+	cout << nbinx <<"\t"<< nbiny <<endl;
+	
+	double xr_real = xl+step*(double)nbinx;
+	double yr_real = yl+step*(double)nbiny;
+	cout << xr_real<<"\t" << yr_real <<endl;
+	TH2D* pix_map = new TH2D("pix_map","pix_map", nbinx, xl, xr_real, nbiny, yl, yr_real);
+	TString filename = "/afs/desy.de/user/z/zakharos/dust/eutelescope/v01-19-02/Eutelescope/master/jobsub/examples/gbl_SUT/output/histograms/run000110-gblkinkestimator.root";
+	/*TString filename = "/nfs/dust/atlas/user/arling/forStepan/20180418_analysis_atlasX0_Feb2017_TB21_alu3mm_1p0GeV.root";*/
+	TFile* file = TFile::Open(filename);
+	TTree * tree = (TTree*)file->Get("GBLKinkEstimator/KinkAngles"); // for Al add to the GBL before KinkEstimator 
+	
+	std::vector<double>* x = 0;
+	std::vector<double>* y = 0;
+	std::vector<double>* kinkx = 0;
+	std::vector<double>* kinky = 0;
+	
+	tree->SetBranchAddress("x",&x);
+	tree->SetBranchAddress("y",&y);
+	tree->SetBranchAddress("kinkx",&kinkx);
+	tree->SetBranchAddress("kinky",&kinky);
+	
+	double tSize = tree->GetEntries();
+
+	TH1D *xkink_h = new TH1D("xkink_h","xkink_h",100, -0.03, 0.03); //LIMITS!!!!
+	TH1D *ykink_h = new TH1D("ykink_h","ykink_h",100, -0.03, 0.03);
+	double xr_cur = 0;
+	double xl_cur = 0;
+	double yl_cur = 0;
+	double yr_cur = 0;
+	int i = 0;
+	int j = 0;
+	int k = 0;
+	int l = 0;
+	double xtheta = 0;
+	double ytheta = 0;
+	double theta = 0;
+	double relX = 0;
+	for( i = 1; i <= nbinx; ++i){
+		xl_cur = xl+step*(i-1);
+		xr_cur = xl+step*i;
+		for( j = 1; j <= nbiny; ++j){
+			yl_cur = yl+step*(j-1);
+			yr_cur = yl+step*j;
+			for( k = 0; k < tSize; ++k){
+				tree->GetEvent(k);
+				//cout<<"New entry "<<k<<endl;
+				for ( l = 0; l < x->size(); ++l){ 		
+					//cout<<"New hit"<< j <<endl;			
+					if(x->at(l) >= xl_cur &&
+					   x->at(l) <= xr_cur &&
+					   y->at(l) >= yl_cur &&
+					   y->at(l) <= yr_cur){
+					   xkink_h->Fill(kinkx->at(l));
+					   ykink_h->Fill(kinky->at(l));	
+					   //cout<<"New hit added"<<endl;	
+					}
+				}	
+	
+			}
+			xtheta = xkink_h->GetRMS();
+			ytheta = ykink_h->GetRMS();
+			xkink_h->Reset();
+			ykink_h->Reset();
+			theta = TMath::Sqrt(1/2.*(xtheta*xtheta + ytheta*ytheta));
+			relX = CalculateX0(theta*1000);	//theta in milirads
+			pix_map->SetBinContent(i,j,relX);
+			cout<<xl_cur<<"\t"<<yl_cur<<"\t"<<theta<<"\t"<<relX<<endl;
+		}
+	}
+	//pix_map->Draw("colz");
+	TFile* output = TFile::Open("output.root", "RECREATE");
+	output->cd();
+	pix_map->Write();
+	output->Close();
+
+
+
+
+
+
+
+
+
+
+
+
+}
+

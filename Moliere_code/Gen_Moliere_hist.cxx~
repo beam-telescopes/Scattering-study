@@ -1,0 +1,408 @@
+#include <iostream>
+#include <cmath>
+#include <fstream>
+#include "TSystem.h"
+#include "TApplication.h"
+#include "TFile.h"
+#include "TTree.h"
+#include "TCut.h"
+#include "TString.h"
+#include "TMath.h"
+#include "TROOT.h"
+#include "Fit/Fitter.h"
+#include "Fit/BinData.h"
+#include "Fit/Chi2FCN.h"
+#include "TH1.h"
+#include "TList.h"
+#include "Math/WrappedMultiTF1.h"
+#include "HFitInterface.h"
+#include "TCanvas.h"
+#include "TStyle.h"
+#include <cstdlib>
+#include <map>
+#include <string>
+#include <fstream>
+#include <vector>
+#include <sstream>
+#include "TChain.h"
+#include "TCanvas.h"
+#include "TObjString.h"
+#include "TH1.h"
+#include "TH2.h"
+#include "THStack.h"
+#include "TKey.h"
+#include "TFractionFitter.h"
+#include "TLegend.h"
+#include "ParList.h"
+
+//function to calculate B parameter of Molier approximation
+double calculateB(double log_omega_b)
+{
+	// Initialize Bmin and Bmax values
+	double Bmin=1.0;
+	double Bmax=30.0;
+
+	// Iniatialize B value as mean between starting values of lower and upper B bound
+	double B=(Bmin+Bmax)/2.0;
+
+	// Calculate difference between measured omega b and omega b(B) with this starting B value
+	double difference;
+	difference=pow(10,(log_omega_b))-1.167*exp(B)/B;
+
+	// For loop used to minimize difference between measured omega b and omega b(B)
+	for(Int_t i=1; sqrt(pow(difference,2))>1E-8; i++)
+	{
+		// If the difference is larger than 0 the current B value is too small, therefore the lower bound of B (Bmin)
+		// is now set to be the current X/X0 value
+		if(difference>0){Bmin=B;}
+
+		// If the difference is smaller than 0 the current B value is too large, therefore the upper bound of B (Bmax)
+		// is now set to be the current X/X0 value
+		else{Bmax=B;}
+
+		// Calculate the new B value from the updated limits
+		B=(Bmin+Bmax)/2.0;
+		difference=pow(10,(log_omega_b))-1.167*exp(B)/B;
+		if(i==100)
+		{
+			B=1.0;
+			break;
+		}
+	}
+
+	return B;
+}
+// define input array of variables
+/* 
+	* par[0]:   Expected beam energy at u,v=0;
+	* par[1]:   Beam particle charge
+	* par[2]:   Beam particle mass
+	* par[3]:   Target material density
+	* par[4]:   Target material atomic number
+	* par[5]:   Target material atomic weight
+	* par[6]:   Thickness
+	* par[7]:   Expected angle reconstruction error
+	* par[8]:   reco error calibration factor
+	* par[9]:   Normalization
+	* par[10]:  u coordinate
+	* par[11]:  v coordinate
+	* par[12]:  u BE gradient
+	* par[13]:  v BE gradient
+*/
+void Gen_Moliere_hist(void){ //par defined in ParList.h
+
+
+    // atomic number of target material
+	double Z; 
+	Z=par[4];  
+
+	// atomic weight of target material
+	double A;
+	A=par[5];
+
+	//density of the target material
+	double density;  
+	density=par[3]; 
+
+	// thickness of the target material
+	double dm1=par[6]; // in mm
+	double d1;	// in cm
+	d1=dm1/10.0;
+
+	// Other parameters
+	double exp_recoerror=par[7];  //expected reconstruction error
+	double lambda=par[8];	//calibration factor of the reconstrcution error
+
+	double recoerror=exp_recoerror*lambda;   // calibrated reco error
+
+    // particle parameters
+
+	// mass of beam particle
+	double mass;   
+	mass=par[2];  
+
+	// charge of beam particle
+	double charge;   
+	charge=par[1];
+
+	// beam energy
+	//double p=GetMomentum(par[0],par[10],par[11],par[12],par[13]);   // Energy in GeV
+	double E = par[0];
+	double p = TMath::Sqrt(E*E-mass*mass);
+	
+	double beta;  //relative velocity
+	beta=p/E;
+
+	// areal density (proportional to the thickness) for thickness 1
+	double arealdensity1=density*d1; 
+	
+	// em coupling constant
+	double alpha=1.0/(137.0*beta)*Z; 
+
+	// aid variable for thickness 1
+	double log_omega_b1=8.215+log(pow(Z,(-0.6667))*(arealdensity1/A)*pow(alpha,2)/(1.13+3.76*pow(alpha,2)))/log(10.0); 
+	//cout<<"log Omega 1 is "<<log_omega_b1<<endl;
+
+	// parameter that will be used in the masterformula of the overall angle distribution (thickness1)
+	double B1=calculateB(log_omega_b1);
+
+	// chi_C parameter (dependend on thickness, momentum etc), given in µrad
+	double chi_C=22.9*charge*Z/(1000.0*p)*TMath::Sqrt(arealdensity1/(pow(beta,2)*A))*TMath::Pi()/180.0;
+	// number of points
+	const int numpoints_aid=19;
+	const int numpoints=2*numpoints_aid-1;
+	// number of bins in the final histogram
+	const int numbins=81;
+
+	// upper limit of histogram
+	double high=4.05*chi_C*TMath::Sqrt(B1); //in rad
+	
+	// lower limit of histogram
+	double low=-high;
+
+	// values taken from table 2
+	double phi_values[numbins];
+	double phi_values_rad[numbins];
+
+	// Calculate phi(rad) from the normalized values
+	for(int i=0; i<numbins; i++)
+	{
+		phi_values[i]=-4.0+i*0.1;
+		phi_values_rad[i]=phi_values[i]*chi_C*TMath::Sqrt(B1);
+	}
+	
+	// Get f1 and f2 values for the the distribution (only positive angle values) numbers from MOLIERE paper
+	double f1_values_aid[numpoints_aid] ={0.0206,-0.0246,-0.1336,-0.2440,-0.2953,-0.2630,-0.1622,-0.0423,
+				    0.0609,0.1274,0.147,0.142,0.1225,0.100,0.078,0.059,0.045,0.0316,0.0194};
+	double f2_values_aid[numpoints_aid] ={0.416,0.299,0.019,-0.229,-0.292,-0.174,0.010,0.138,0.146,0.094,
+				    0.045,-0.049,-0.071,-0.064,-0.043,-0.024,-0.010,0.001,0.006};
+
+	//  f1 and f2 values for the total distribution (also negative angles, but some missing values)
+	double f1_values_aid2[numpoints];
+	double f2_values_aid2[numpoints];
+
+	//  f1 and f2 values for the total distribution (also negative angles) between phi=-4.0 and 4.0 with an 0.1 increment
+	double f1_values[numbins];
+	double f2_values[numbins];
+
+	// Get f1 and f2 values for the whole (also negative angles) distribution 
+	for(int i=0; i<numpoints;i++)
+	{
+		if(i<numpoints_aid-1)
+		{
+			f1_values_aid2[i]=f1_values_aid[numpoints_aid-(i+1)];
+			f2_values_aid2[i]=f2_values_aid[numpoints_aid-(i+1)];
+		}
+
+		else
+		{
+			f1_values_aid2[i]=f1_values_aid[i-(numpoints_aid-1)];
+			f2_values_aid2[i]=f2_values_aid[i-(numpoints_aid-1)];
+		}
+
+	}
+
+	// add temporary values to the bins which will be filled with the extrapolated values later
+	for(int i=0; i<numbins;i++)
+	{
+			if(i<3)
+			{			
+				f1_values[i]=f1_values_aid2[0];
+				f2_values[i]=f2_values_aid2[0];
+			}
+
+			else if(i<7)	
+			{
+				f1_values[i]=f1_values_aid2[1];
+				f2_values[i]=f2_values_aid2[1];
+			}
+
+			else if(i>numbins-4)	
+			{
+				f1_values[i]=f1_values_aid2[numpoints-1];
+				f2_values[i]=f2_values_aid2[numpoints-1];
+			}
+
+			else if(i>numbins-8)	
+			{
+				f1_values[i]=f1_values_aid2[numpoints-2];
+				f2_values[i]=f2_values_aid2[numpoints-2];
+			}
+
+
+
+			else if(i<41)
+			{
+				if(i%2==1)
+				{
+					f1_values[i]=f1_values_aid2[i/2-1];
+					f2_values[i]=f2_values_aid2[i/2-1];
+				}
+				else
+				{
+					f1_values[i]=f1_values_aid2[i/2-2];
+					f2_values[i]=f2_values_aid2[i/2-2];
+				}
+			}
+
+			else
+			{
+			    if(i%2==1)
+				{
+					f1_values[i]=f1_values_aid2[i/2-2];
+					f2_values[i]=f2_values_aid2[i/2-2];
+				}
+				else
+				{
+					f1_values[i]=f1_values_aid2[i/2-2];
+					f2_values[i]=f2_values_aid2[i/2-2];
+
+				}
+			}
+
+	}
+
+	// Declaration of the histogram containing the values of the first function given in table 2
+	TH1F * h_f1_table = new TH1F("f1_table","f1_table",numbins,low,high);
+    h_f1_table->SetStats(kFALSE);
+
+	// Declaration of the histogram containing the values of the first function given in table 2
+	TH1F * h_f2_table = new TH1F("f2_table","f2_table",numbins,low,high);
+    h_f2_table->SetStats(kFALSE);
+
+	// Declaration of the histogram containing the overall moliere angle distibution (including reconstruction errors)
+	TH1F * h_moliere_conv = new TH1F("moliere_conv","moliere_conv",numbins,low,high);
+    h_moliere_conv->SetStats(kFALSE);
+
+	// Declaration of the histogram containing the gaussian distribution
+	TH1F * h_gaus = new TH1F("gausfunc","gausfunc",numbins,low,high);
+    h_gaus->SetStats(kFALSE);
+
+	// Declaration of the histogram containing the overall angle distibution
+	double low_mrad = 1e3*low;
+	double high_mrad = 1e3*high;
+	TH1F * h_moliere = new TH1F("moliereNoConv","moliereNoConv",numbins,low_mrad,high_mrad);
+	TH1F *h_moliere_conv = new TH1F("moliere","moliere",numbins,low_mrad,high_mrad);
+    h_moliere_conv->SetStats(kFALSE);
+	h_moliere->SetStats(kFALSE);
+
+	// fill the f1 and f2 histograms with the corresponding values
+	for(int i=0; i<numbins;i++)
+	{
+			h_f1_table->SetBinContent(i+1,f1_values[i]);
+			h_f2_table->SetBinContent(i+1,f2_values[i]);		
+	}
+
+	// fill the gaussian function with the corresponding values
+	for(int i=0; i<numbins;i++)
+	{
+		// value of the gaussian function at this bin
+		double value=2.0/TMath::Sqrt(TMath::Pi())*TMath::Exp(-1.0*pow((phi_values_rad[i]/(chi_C*TMath::Sqrt(B1))),2));
+
+		// Bin number corresponding to the current phi value
+		int bin_No=i+1;
+
+		// Set histogram values
+		h_gaus->SetBinContent(bin_No,value);	
+	}
+
+	// Interpolation of additional points of the f1 and f2 histograms
+	for(int i=1; i<numbins-1;i+=2)
+	{
+
+	double interpolation1=0;
+	double interpolation2=0;
+
+		if(i<40)
+		{
+			// f1 interpolation
+			double newpoint=0.5*(phi_values_rad[i]+phi_values_rad[i-1]);
+
+			interpolation1=h_f1_table->Interpolate(newpoint);
+			interpolation2=h_f2_table->Interpolate(newpoint);
+		}
+
+		else 
+		{
+			// f1 interpolation
+			double newpoint=0.5*(phi_values_rad[i]+phi_values_rad[i+1]);
+
+			interpolation1=h_f1_table->Interpolate(newpoint);
+			interpolation2=h_f2_table->Interpolate(newpoint);
+		}
+
+			// Set histogram values
+			h_f1_table->SetBinContent(i+1,interpolation1);
+			h_f2_table->SetBinContent(i+1,interpolation2);	
+	
+			
+	} 
+
+
+	// fill the overall distribution with the values calculated from gaussian f1 and f2
+	for(int i=0; i<numbins;i++)
+	{
+		// Bin number corresponding to the current phi value
+		int bin_No=i+1;
+
+		// value of the overall function computed from the other functions (thickness 1)
+		double total_value1=h_gaus->GetBinContent(bin_No)+h_f1_table->GetBinContent(bin_No)/B1+h_f2_table->GetBinContent(bin_No)/(B1*B1);
+
+		h_moliere->SetBinContent(bin_No,total_value1);
+	}
+
+	// Do a normalization of the histograms
+	 h_moliere->Scale(1.0/h_moliere->Integral("width"));
+	
+// Plot Moliere distribution and f1, f2 functions
+/*
+	h_f2_table->SetLineWidth(2);
+	h_f2_table->Scale(1/TMath::Sqrt(TMath::Pi()));
+	h_f2_table->Draw();
+	
+	h_f1_table->SetLineWidth(2);
+	h_f1_table->SetLineColor(kRed);
+	h_f1_table->Scale(1/TMath::Sqrt(TMath::Pi()));
+	h_f1_table->Draw("SAME");
+   	
+	auto legend = new TLegend(0.72,0.8,0.88,0.88);
+    legend->AddEntry(h_f1_table,"f1 graph");
+	legend->AddEntry(h_f2_table,"f2 graph");
+	legend->Draw("SAME");
+	c1->Update();
+	
+	TCanvas *c2 = new TCanvas("c2","c2",800,600);
+	c2->cd();
+	h_moliere->Scale(1./h_moliere->Integral("width"));
+	h_moliere->Draw();
+	//h_moliere->Fit("gaus");
+	c2->SetLogy();*/
+// Convolution of gaussian function and Moliere distribution
+
+	double conv_integral = 0;
+	double FWHM = 0.0;
+	double sigma = FWHM/2.355;
+	for(int i = 0; i <numbins; i++){
+		for(int j = 0; j <numbins; j++){	
+			conv_integral += h_moliere->GetBinContent(j+1)*TMath::Gaus(phi_values_rad[j]-phi_values_rad[i],0,sigma);
+		}
+		h_moliere_conv->SetBinContent(i+1,conv_integral);	
+		conv_integral = 0;
+	}
+	h_moliere_conv->SetLineColor(kRed);
+	h_moliere_conv->Scale(1./h_moliere_conv->Integral("width"));
+	//h_moliere_conv->Draw("SAME");
+
+
+
+
+
+///Make a file with moliere distribution
+	TFile * moliere = TFile::Open("/afs/desy.de/user/z/zakharos/Moliere_code/Moliere_hist.root","RECREATE");
+	h_moliere_conv->Write();
+	delete moliere;
+}
+
+
+
+
